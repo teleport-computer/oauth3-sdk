@@ -1,0 +1,19 @@
+{
+  "name": "oauth3-sdk",
+  "version": "0.1.0",
+  "description": "Client SDK for OAuth3 — read a user's data through an instance they trust, with a scoped token, never the raw cookies.",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": ["src"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "example:otter": "bun examples/otter-list.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "typescript": "5.5"
+  }
+}
