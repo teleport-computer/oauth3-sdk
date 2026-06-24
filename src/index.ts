@@ -145,9 +145,10 @@ export class Oauth3Client {
    * surfaces an approval URL to the user, polls until they approve, then adopts
    * the returned scoped token so subsequent list()/fetch() calls Just Work.
    *
-   * Server contract (see README — endpoints pending the federation/approval work):
-   *   POST /api/connect            { plugin, subject?, app? } -> { requestId, approveUrl }
-   *   GET  /api/connect/:requestId                            -> ConnectStatus
+   * Server contract (implemented — connect → approve → token):
+   *   POST /api/connect                    { plugin, subject?, app? } -> { requestId, approveUrl }
+   *   GET  /api/connect/:requestId                                    -> ConnectStatus
+   *   POST /api/connect/:requestId/approve                            -> approves, mints token
    */
   async connect(opts: ConnectOptions): Promise<string> {
     // Provider-preferred: if the OAuth3 wallet (extension) is present, let it carry

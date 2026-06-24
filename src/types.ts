@@ -20,7 +20,7 @@ export interface PluginItem {
   meta?: Record<string, unknown>;
 }
 
-/** Returned by the (pending) app-authorization handshake. */
+/** Returned by the app-authorization handshake. */
 export interface ConnectRequest {
   requestId: string;
   approveUrl: string;

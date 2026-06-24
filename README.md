@@ -40,12 +40,12 @@ await oa.connect({
 await oa.plugin("otter").list();   // token adopted automatically
 ```
 
-`connect()` is implemented against this server contract, which lands with the
-federation/approval work (not deployed yet — calling it now throws a 404):
+`connect()` is implemented and working against this server contract:
 
 ```
-POST /api/connect           { plugin, subject?, app? } -> { requestId, approveUrl }
-GET  /api/connect/:requestId                           -> { status: pending|denied|approved, token? }
+POST /api/connect                    { plugin, subject?, app? } -> { requestId, approveUrl }
+GET  /api/connect/:requestId                                    -> { status: pending|denied|approved, token? }
+POST /api/connect/:requestId/approve                            -> approves the request, mints the token
 ```
 
 ## How the "otter app" works
