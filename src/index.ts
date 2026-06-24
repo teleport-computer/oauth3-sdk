@@ -150,6 +150,16 @@ export class Oauth3Client {
    *   GET  /api/connect/:requestId                            -> ConnectStatus
    */
   async connect(opts: ConnectOptions): Promise<string> {
+    // Provider-preferred: if the OAuth3 wallet (extension) is present, let it carry
+    // out the whole flow — copy the cookie jar if needed, approve, hand back a token.
+    const prov = (globalThis as any).oauth3 ?? (globalThis as any).window?.oauth3;
+    if (prov && typeof prov.connect === "function") {
+      const token = await prov.connect({ node: this.node, plugin: opts.plugin, subject: opts.subject, app: opts.app });
+      this.token = token;
+      return token;
+    }
+    // Web fallback (no extension): server connect → user approves in their signed-in
+    // room at approveUrl → poll until the token comes back.
     const reqRes: ConnectRequest = await this.req("/api/connect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
