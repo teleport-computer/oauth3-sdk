@@ -3,7 +3,7 @@
 The **consume** side of [OAuth3](https://teleport.computer). An app reads a user's
 data through an OAuth3 instance with a **scoped read token** — it never holds the
 raw cookie jar. (The [`oauth3-extension`](../oauth3-extension) is the ingest side;
-the server + plugins are in [`teleport-plugins`](../teleport-plugins).)
+the server + plugins are in [`oauth3-server`](../oauth3-server).)
 
 ```ts
 import { oauth3 } from "oauth3-sdk";
