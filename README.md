@@ -8,36 +8,99 @@ the server + plugins are in [`oauth3-server`](../oauth3-server).)
 ```ts
 import { oauth3 } from "oauth3-sdk";
 
-const oa = oauth3({ node: "https://<your-instance>", token: "tok-otter-…" });
+const oa = oauth3({ node: "https://<your-instance>", token: "tok-youtube-…" });
 
-const notes = await oa.plugin("otter").list();
-const transcript = await oa.plugin("otter").fetch(notes[0].id);
+const history = await oa.plugin("youtube").list();      // watch history
+const video = await oa.plugin("youtube").fetch(history[0].id);
 ```
 
-## Two ways an app gets a token
+- **Quickstart** — one round trip, end to end. ↓
+- **Getting a token** — `connect()` vs owner-minted.
+- [**API reference**](#api-reference) — every option and method, with types.
+- [**Errors**](#errors) — the `Oauth3Error` shape, 401 / revoked.
+- [**Token lifecycle**](#token-lifecycle) — obtain, store, expiry/revocation handling.
+- [**Running against a node**](#running-against-a-node) — local dev vs hosted.
+- [**Examples**](#examples) — what's in `examples/` and how to run them.
 
-**Today — owner mints, app holds.** The owner (holding the instance's
-`OWNER_SECRET`) mints a token bound to one plugin and hands it to the app:
+> The running example throughout this README is **YouTube watch history** — the
+> `youtube` plugin, available on the node. The same `connect → list → fetch` shape
+> works for any plugin (`reddit`, `nytimes`, `otter`, …). Otter is shown as a
+> [secondary example](#examples).
+
+---
+
+## Quickstart
+
+The shape of *every* oauth3 app is three steps — **connect → read → use**:
+
+1. **connect** — the app asks the user's instance for scoped access to one plugin.
+   The user approves *this app* onto *their* instance (extension popup or instance
+   dashboard). A scoped, revocable token comes back and the SDK adopts it.
+2. **read** — `list()` / `fetch(id)` against `/api/:plugin/items`. No cookies cross
+   the wire; the jar stays sealed in the instance.
+3. **do the app's job** — e.g. summarize or re-rank the user's watch history.
+   Revoke the token and the app is cut off; the jar never moved.
+
+End to end against a local instance:
+
+```bash
+# 1. an OAuth3 instance is running locally (oauth3-server, default port 3000)
+git clone https://github.com/teleport-computer/oauth3-server && cd oauth3-server && bun run dev
+
+# 2. save this snippet as history.ts and run it — it walks connect → list → fetch
+OAUTH3_NODE=http://localhost:3000 bun history.ts
+```
 
 ```ts
-const admin = oauth3({ node, ownerSecret: process.env.OWNER_SECRET });
-const token = await admin.mint("otter", "andrew");   // POST /api/tokens
-// give `token` to the app; it runs oauth3({ node, token })
+// history.ts — your first oauth3 app. Holds NO cookies.
+import { oauth3 } from "oauth3-sdk";
+
+const oa = oauth3({ node: process.env.OAUTH3_NODE ?? "http://localhost:3000" });
+
+// 1. connect — prints an approval URL; approve in your OAuth3 instance
+//    (extension popup or dashboard). The SDK adopts the scoped token it returns.
+await oa.connect({
+  plugin: "youtube",
+  app: "watch-history-explorer",
+  onApproveUrl: (url) => console.log(`approve this app:\n  ${url}`),
+});
+
+// 2. read — scoped token in hand, never the jar.
+const yt = oa.plugin("youtube");
+const history = await yt.list();                 // GET /api/youtube/items
+console.log(`${history.length} watch-history items`);
+for (const v of history.slice(0, 5)) console.log(`  ${v.date ?? ""}  ${v.title}`);
+
+// 3. fetch one item in full
+const first = await yt.fetch(history[0].id);     // GET /api/youtube/items/:id
+console.log(JSON.stringify(first).slice(0, 240), "…");
 ```
 
-**Soon — the app connects, the user approves.** The `connect()` handshake is the
-real delegation flow: the app requests access, the user approves it onto their
+The app prints an approval URL. Open it (or approve from the extension popup if
+`window.oauth3` is present — see [Token lifecycle](#token-lifecycle)). On approval
+the app receives a scoped token, then prints the user's watch history — never the
+cookie. The same shape works for any plugin and any app on top.
+
+> Three complete, runnable example apps live in [`examples/`](#examples)
+> (otter / reddit / nytimes).
+
+---
+
+## Getting a token
+
+**A. The app connects, the user approves (normal).** The `connect()` handshake is
+the real delegation flow: the app requests access, the user approves it onto their
 instance, a scoped token is issued back. This is the OAuth-style consent, but
 scoped to one plugin and revocable.
 
 ```ts
 const oa = oauth3({ node });
 await oa.connect({
-  plugin: "otter",
-  app: "otter-importer",
+  plugin: "youtube",
+  app: "watch-history-explorer",
   onApproveUrl: (url) => console.log(`approve: ${url}`),
 });
-await oa.plugin("otter").list();   // token adopted automatically
+await oa.plugin("youtube").list();   // token adopted automatically
 ```
 
 `connect()` is implemented and working against this server contract:
@@ -48,33 +111,283 @@ GET  /api/connect/:requestId                                    -> { status: pen
 POST /api/connect/:requestId/approve                            -> approves the request, mints the token
 ```
 
-## How the "otter app" works
+**B. Owner mints, app holds (dev / pre-authorized).** The owner (holding the
+instance's `OWNER_SECRET`) mints a token bound to one plugin and hands it to the
+app. Useful in CI, backfills, or any context where there's no human to click
+"approve":
 
-`examples/otter-list.ts` is the reference consumer. The shape of any oauth3 app:
+```ts
+const admin = oauth3({ node, ownerSecret: process.env.OWNER_SECRET });
+const token = await admin.mint("youtube", "andrew");   // POST /api/tokens
+// give `token` to the app; it runs oauth3({ node, token })
+```
 
-1. **connect** — the app names the plugin(s) it wants and shows the user an
-   approval URL. The user approves *this app* onto *their* instance (in the
-   extension popup or the instance dashboard). A scoped, revocable token comes back.
-2. **read** — `list()` / `fetch(id)` against `/api/:plugin/items`. No cookies cross
-   the wire; the jar stays sealed in the instance.
-3. **do the app's job** — e.g. otter-importer publishes the transcripts into
-   TinyCloud. Revoke the token and the app is cut off; the jar never moved.
+**C. The app already has a token.** Skip both paths and pass it straight in:
 
-The point: the otter-importer you have today holds the Otter cookie itself. Ported
-onto this SDK, it holds only a token the user can revoke — and the same `connect →
-list → fetch` shape works for any plugin (youtube, …) and any future app.
+```ts
+const oa = oauth3({ node, token: process.env.OAUTH3_TOKEN });
+await oa.plugin("youtube").list();
+```
 
-## API
+---
 
-| call | http | who |
+## API reference
+
+### `oauth3(opts): Oauth3Client`
+
+Construct a client. One per (instance, credential) pair.
+
+```ts
+interface Oauth3Options {
+  /** Base URL of the OAuth3 instance, e.g. https://<node> or http://localhost:3000. Required. */
+  node: string;
+  /** Scoped read token — the normal credential for an app. */
+  token?: string;
+  /** Owner secret — dev/admin only. Mints tokens and reads everything. */
+  ownerSecret?: string;
+  /** Override fetch (tests, custom runtimes without a global fetch). */
+  fetch?: typeof fetch;
+}
+```
+
+Throws `Oauth3Error("node URL is required")` if `node` is empty.
+
+### Reading data
+
+| call | http | auth |
 |---|---|---|
 | `oa.plugins()` | `GET /api/plugins` | anyone |
+| `oa.plugin(id)` | — | returns a `PluginClient` bound to one plugin |
 | `oa.plugin(id).list()` / `oa.list(id)` | `GET /api/:plugin/items` | token or owner |
 | `oa.plugin(id).fetch(itemId)` / `oa.fetch(id, itemId)` | `GET /api/:plugin/items/:id` | token or owner |
-| `oa.mint(plugin, subject?)` | `POST /api/tokens` | owner |
-| `oa.connect({ plugin, … })` | `POST /api/connect` + poll | app (pending) |
 
-Errors surface as `Oauth3Error` with `.status` and `.body` — nothing is swallowed.
+`plugin(id)` returns a `PluginClient` with `.list()` and `.fetch(itemId)`. It's
+purely a shorthand — `oa.plugin("youtube").list()` and `oa.list("youtube")` are
+the same call.
+
+```ts
+interface PluginItem {
+  id: string;
+  title: string;
+  date?: string;   // ISO
+  meta?: Record<string, unknown>;
+}
+
+interface PluginInfo {
+  id: string;
+  label: string;
+  cookieDomains: string[];
+  jar?: { present: boolean; loggedIn?: boolean; count?: number; updatedAt?: number };
+}
+```
+
+### Issuing tokens
+
+| call | http | auth |
+|---|---|---|
+| `oa.mint(plugin, subject?)` | `POST /api/tokens` | owner (`ownerSecret`) |
+
+Returns the token string. Throws `Oauth3Error("… requires ownerSecret")` if no
+owner secret is configured.
+
+### `oa.connect(opts): Promise<string>`
+
+The app-authorization handshake. Returns the scoped token and adopts it onto the
+client so subsequent reads Just Work.
+
+```ts
+interface ConnectOptions {
+  plugin: string;
+  /** Attribution carried by the token, e.g. the user's handle. */
+  subject?: string;
+  /** App identifier shown to the user on the approval screen. */
+  app?: string;
+  /** Surface the URL the user must visit to approve (print it / redirect to it). */
+  onApproveUrl?: (url: string) => void | Promise<void>;
+  intervalMs?: number;   // poll cadence, default 2000
+  timeoutMs?: number;    // give up after, default 300_000 (5 min)
+}
+```
+
+Provider-preferred path: if the OAuth3 wallet/extension has injected
+`globalThis.oauth3` (or `window.oauth3`) with a `connect()` method, the SDK hands
+the whole flow to it — the extension copies the cookie jar, approves, and returns
+a token. Otherwise it falls back to the server polling path (`POST /api/connect`
+→ user approves at `approveUrl` → poll `GET /api/connect/:id`). See
+[Token lifecycle](#token-lifecycle).
+
+Throws `Oauth3Error("connect denied by user")` if the user denies, or
+`Oauth3Error("connect timed out")` if `timeoutMs` elapses.
+
+### Other members
+
+- `oa.node: string` — the normalized instance base URL (trailing slashes stripped).
+- `oa.currentToken: string | undefined` — the scoped token in hand, if any. Set
+  when you pass `token` in, or after `connect()` succeeds. Read this to persist it
+  (see [Token lifecycle](#token-lifecycle)).
+
+### `Oauth3Error`
+
+Every non-2xx response and every client-side precondition failure surfaces as an
+`Oauth3Error`. Nothing is swallowed.
+
+```ts
+class Oauth3Error extends Error {
+  message: string;   // server's reason (body.error), or body text, or statusText
+  status?: number;   // HTTP status, e.g. 401, 403, 404, 500
+  body?: unknown;    // parsed JSON body, or raw text, or null
+  name = "Oauth3Error";
+}
+```
+
+---
+
+## Errors
+
+Errors are not hidden: any non-OK response from the instance throws
+`Oauth3Error` with the HTTP `status`, the response `body`, and a `message` derived
+from the most informative field the server gave.
+
+```ts
+import { oauth3, Oauth3Error } from "oauth3-sdk";
+
+try {
+  await oa.plugin("youtube").list();
+} catch (e) {
+  if (e instanceof Oauth3Error) {
+    console.log(e.status);  // 401
+    console.log(e.message); // "token revoked"  (whatever the server sent)
+    console.log(e.body);    // { error: "token revoked" }
+  } else throw e;            // network / programming error
+}
+```
+
+How `message` is chosen (in order): `body.error` if the body is JSON with an
+`error` field → the body itself if it's a non-empty string (e.g. a plain
+`"not found"`) → the response's `statusText`. The raw `body` is always attached
+unchanged, so the caller can read any extra fields the server sent.
+
+**401 / revoked token.** A token that has expired or been revoked surfaces as an
+`Oauth3Error` whose `status` is `401` (whatever the instance returns for a bad
+credential) and whose `body.error` carries the server's reason. The standard
+recovery is to drop the stale token and re-run `connect()`:
+
+```ts
+async function readHistory() {
+  try {
+    return await oa.plugin("youtube").list();
+  } catch (e) {
+    if (e instanceof Oauth3Error && e.status === 401) {
+      // token gone (expired / revoked) — re-consent and retry once.
+      await oa.connect({ plugin: "youtube", app: "watch-history-explorer", onApproveUrl });
+      return await oa.plugin("youtube").list();
+    }
+    throw e;
+  }
+}
+```
+
+**404 / `connect pending`.** A polling call before the user has approved returns a
+`pending` status the SDK already handles internally; a `404` here means the
+`requestId` is unknown to the instance. **403** means the credential lacks scope
+for that plugin (e.g. a `youtube` token hitting `/api/reddit/items`).
+
+---
+
+## Token lifecycle
+
+The token is the *only* long-lived credential the app holds. Treat it like one.
+
+**Obtaining.** Three sources, in order of preference:
+
+1. **Extension provider (best UX in-browser).** When the OAuth3 extension is
+   installed, it injects `window.oauth3`. Calling `oa.connect({ plugin, app })`
+   detects it and hands the whole flow to `window.oauth3.connect({ node, plugin,
+   subject, app })` — the extension copies the cookie jar, performs the approval,
+   and returns a scoped token. The user sees nothing they didn't already trust.
+2. **Server handshake (no extension).** `connect()` POSTs to `/api/connect`,
+   surfaces `approveUrl` via `onApproveUrl`, and polls until the user approves at
+   that URL (in their signed-in instance room or dashboard). Same scoped token
+   comes back.
+3. **Owner-minted (dev / CI).** `oauth3({ ownerSecret }).mint(plugin, subject)`
+   returns a token you can pass to a non-interactive process.
+
+**Storing.** After any of the above, read `oa.currentToken` and persist it — env
+var, `localStorage`, KV, a file. On the next boot, pass it straight back in and
+skip the handshake:
+
+```ts
+// first run: connect, then persist
+await oa.connect({ plugin: "youtube", app: "watch-history-explorer", onApproveUrl });
+localStorage.setItem("oauth3:youtube:token", oa.currentToken!);
+
+// later runs: skip connect, just read
+const oa = oauth3({
+  node,
+  token: localStorage.getItem("oauth3:youtube:token") ?? undefined,
+});
+```
+
+The token is **scoped to one plugin** and bound to the `subject`/`app` you named.
+Store one per plugin.
+
+**Expiry / revocation.** The user (or owner) can revoke from the instance at any
+time. The next read then throws `Oauth3Error` with `status: 401` (see
+[Errors](#errors)). Recover by dropping the stored token and re-running
+`connect()`. There is no silent refresh: a dead token stays dead until the user
+re-consents. Keep `currentToken` in sync with your store — the SDK never mutates
+it except inside `connect()` and `oauth3()` construction.
+
+---
+
+## Running against a node
+
+The SDK talks to one OAuth3 instance — its `node`. Point it at whichever you mean.
+
+```bash
+# local dev server (oauth3-server running on your machine)
+OAUTH3_NODE=http://localhost:3000 bun history.ts
+
+# a hosted node (staging / a pod on dstack / your own deploy) — same SDK, different URL
+OAUTH3_NODE=https://<your-hosted-instance> bun history.ts
+```
+
+| env var | meaning |
+|---|---|
+| `OAUTH3_NODE` | base URL of the instance. Defaults to `http://localhost:3000` in the examples. |
+| `OAUTH3_TOKEN` | a pre-obtained scoped token. Skips `connect()` when set. |
+| `OAUTH3_SUBJECT` | attribution written into the token (e.g. a username). Optional. |
+| `OWNER_SECRET` | instance owner secret — only for minting tokens, never ship in an app. |
+
+From code, the same thing is `oauth3({ node, token })`. Local and hosted are
+identical from the SDK's view — only the URL and whether TLS is on differ.
+
+---
+
+## Examples
+
+Three complete, runnable apps in [`examples/`](examples/), each a full
+`connect → list → fetch` journey for one plugin. Run with any TypeScript-capable
+runtime:
+
+```bash
+bun examples/<name>.ts          # Bun (matches package.json scripts)
+deno run examples/<name>.ts     # Deno
+npx tsx examples/<name>.ts      # Node 18+ via tsx
+```
+
+| file | plugin | what it shows |
+|---|---|---|
+| [`otter-list.ts`](examples/otter-list.ts) | `otter` | the original reference consumer — interactive `connect()` flow, then `list()` + `fetch()` of transcripts. (A real-world app: an importer that used to hold the Otter cookie itself now holds only a revocable token.) |
+| [`reddit-list.ts`](examples/reddit-list.ts) | `reddit` | token-or-connect. Lists saved posts; shows `meta.subreddit`. |
+| [`nytimes-list.ts`](examples/nytimes-list.ts) | `nytimes` | token-or-connect, plus the **browser-path caveat**: NYT's GraphQL is datadome-gated, so the instance may need the browser path to fulfill a read. Catches `Oauth3Error` and reports it instead of pretending. |
+
+All three honor `OAUTH3_NODE` / `OAUTH3_TOKEN` / `OAUTH3_SUBJECT`. Omit
+`OAUTH3_TOKEN` to run the interactive `connect()` approval flow; set it to skip
+straight to reading. The YouTube example used throughout this README is inline in
+the [Quickstart](#quickstart) — same three-step shape, different plugin.
+
+---
 
 ## Runtime
 
