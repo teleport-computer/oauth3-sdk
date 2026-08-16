@@ -99,7 +99,9 @@ export class Oauth3Client {
     this.node = opts.node.replace(/\/+$/, "");
     this.token = opts.token;
     this.ownerSecret = opts.ownerSecret;
-    this._fetch = opts.fetch ?? fetch;
+    // Bound: a detached `fetch` reference throws "Illegal invocation" in browsers
+    // (the CLI path never hits this — the browser example does).
+    this._fetch = opts.fetch ?? fetch.bind(globalThis);
   }
 
   /** The scoped token in hand, if any (set directly or via connect()). */

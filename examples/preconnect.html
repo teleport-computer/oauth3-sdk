@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>preconnect() — oauth3-sdk example</title>
+<!-- The no-extension / mobile consumer of oauth3-sdk (issue #3): check the three
+     preconditions BEFORE connect(), and never lose the approve URL even when no
+     onApproveUrl callback is wired. Loads the real SDK from this branch
+     (oauth3-sdk.browser.js); logic in preconnect-harness.js. -->
+<style>
+ body{font:14px/1.5 ui-monospace,Menlo,Consolas,monospace;max-width:46rem;margin:2rem auto;padding:0 1rem;color:#111}
+ h1{font-size:18px} h1 small{color:#666;font-weight:400}
+ fieldset{border:1px solid #bbb;padding:12px;margin:0 0 14px}
+ label{display:block;font-size:11px;letter-spacing:.08em;color:#555;margin:8px 0 2px;text-transform:uppercase}
+ input{width:100%;box-sizing:border-box;padding:6px;font:13px ui-monospace,Menlo,monospace}
+ button{margin:10px 8px 0 0;padding:7px 12px;font:600 12px ui-monospace,monospace;cursor:pointer}
+ .card{border:1px solid #999;padding:12px;margin:12px 0;white-space:pre-wrap;word-break:break-word}
+ .state{display:inline-block;padding:2px 10px;font-weight:700}
+ .no-jar,.no-account,.unchecked,.unknown-plugin{background:#fde8e8;color:#900}
+ .ready{background:#e3f7e3;color:#060}
+ .pending{background:#fff4d6;color:#705000}
+ .approved{background:#e3f7e3;color:#060}
+ a{color:#06c}
+ .k{color:#888}
+ .masked{color:#888;font-style:italic}
+</style>
+</head>
+<body>
+<h1>preconnect() — the no-extension case <small>(oauth3-sdk example, issue #3)</small></h1>
+<p>What an app on a phone (no desktop extension) should run <b>before</b> connect():
+extension present? · account / signed-in room on the node? · jar present and
+non-empty for the plugin? Then connect with <b>no</b> <code>onApproveUrl</code> wired and
+read the approve URL off the client anyway.</p>
+
+<fieldset>
+ <label>node</label>
+ <input id="node">
+ <label>session token from your room <span class="k">(POST /api/login — kept masked)</span></label>
+ <input id="session" type="password" autocomplete="off">
+ <button id="check-hn">preconnect hackernews</button>
+ <button id="check-otter">preconnect otter</button>
+ <button id="connect">connect otter · no onApproveUrl</button>
+</fieldset>
+
+<div id="out"></div>
+<script type="module" src="./preconnect-harness.js"></script>
+</body>
+</html>

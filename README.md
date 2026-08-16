@@ -137,6 +137,12 @@ borrow the user's room; without a session *and* without the extension,
 account/jar cannot be checked and `preconnect()` says so (`state: "unchecked"`)
 rather than guessing. Runnable: `bun examples/preconnect.ts <plugin> [session]`.
 
+The same check in a **browser** (the no-extension/mobile case, walked in a real
+page): open [`examples/preconnect.html`](examples/preconnect.html) — it loads the
+SDK bundle from this branch, runs `preconnect()` against a node with a session,
+then `connect()` with no `onApproveUrl` wired and shows `oa.pendingApproveUrl` as
+a link you can click into your signed-in room.
+
 And whether or not you wire `onApproveUrl`, the pending approve URL is always
 readable off the client as `oa.pendingApproveUrl` — set the moment `connect()`
 creates its request — so "approve in your signed-in room" is always showable.
@@ -456,6 +462,7 @@ npx tsx examples/<name>.ts      # Node 18+ via tsx
 | [`reddit-list.ts`](examples/reddit-list.ts) | `reddit` | token-or-connect. Lists saved posts; shows `meta.subreddit`. |
 | [`nytimes-list.ts`](examples/nytimes-list.ts) | `nytimes` | token-or-connect, plus the **browser-path caveat**: NYT's GraphQL is datadome-gated, so the instance may need the browser path to fulfill a read. Catches `Oauth3Error` and reports it instead of pretending. |
 | [`preconnect.ts`](examples/preconnect.ts) | any | the precondition check **before** `connect()` — extension present? signed-in room? non-empty jar? Prints the honest state (`ready` / `no-jar` / `no-account` / `unchecked`) and exits non-zero when not ready. |
+| [`preconnect.html`](examples/preconnect.html) | any | the browser form of the same check — served from `examples/`, it loads [`oauth3-sdk.browser.js`](examples/oauth3-sdk.browser.js) (regenerate: `bun build src/index.ts --bundle --format=esm --minify --outfile=examples/oauth3-sdk.browser.js`), runs `preconnect()` and a no-callback `connect()` end-to-end, and survives the trip to the approve page. |
 
 All three honor `OAUTH3_NODE` / `OAUTH3_TOKEN` / `OAUTH3_SUBJECT`. Omit
 `OAUTH3_TOKEN` to run the interactive `connect()` approval flow; set it to skip
