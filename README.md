@@ -82,7 +82,7 @@ the app receives a scoped token, then prints the user's watch history — never 
 cookie. The same shape works for any plugin and any app on top.
 
 > Three complete, runnable example apps live in [`examples/`](#examples)
-> (otter / reddit / nytimes).
+> (otter / reddit / nytimes), plus the [`preconnect.ts`](#examples) preflight.
 
 ---
 
@@ -110,6 +110,42 @@ POST /api/connect                    { plugin, subject?, app? } -> { requestId, 
 GET  /api/connect/:requestId                                    -> { status: pending|denied|approved, token? }
 POST /api/connect/:requestId/approve                            -> approves the request, mints the token
 ```
+
+**Before you connect — check preconditions (`preconnect`).** The no-extension
+(mobile) path silently assumes the user already has an account / signed-in room
+on the node, and a jar for the plugin. If the jar is empty, `connect()` still
+completes — and the token it returns authorizes nothing. `preconnect()` reports
+the three things the handshake assumes, so the app can branch the UX *before*
+starting:
+
+```ts
+const report = await oa.preconnect({ plugin: "youtube", session });
+// report.extensionPresent   — window.oauth3 (the desktop extension) is installed
+// report.account            — { signedIn, subject } for `session`, when checkable
+// report.jar                — { present, count } for the plugin, when checkable
+// report.state / .reason    — "ready" | "no-account" | "no-jar" |
+//                             "unknown-plugin" | "unchecked", plus one plain line
+```
+
+For a plugin with no jar the reason is explicit — `no jar for "youtube"; jars
+are ingested by the desktop extension` — instead of a silent
+connect → approve → token → empty read.
+
+`session` is a node session token (`POST /api/login` → `{ session }`) for when
+the app holds one. The daemon proxy strips cookies, so a browser page cannot
+borrow the user's room; without a session *and* without the extension,
+account/jar cannot be checked and `preconnect()` says so (`state: "unchecked"`)
+rather than guessing. Runnable: `bun examples/preconnect.ts <plugin> [session]`.
+
+The same check in a **browser** (the no-extension/mobile case, walked in a real
+page): open [`examples/preconnect.html`](examples/preconnect.html) — it loads the
+SDK bundle from this branch, runs `preconnect()` against a node with a session,
+then `connect()` with no `onApproveUrl` wired and shows `oa.pendingApproveUrl` as
+a link you can click into your signed-in room.
+
+And whether or not you wire `onApproveUrl`, the pending approve URL is always
+readable off the client as `oa.pendingApproveUrl` — set the moment `connect()`
+creates its request — so "approve in your signed-in room" is always showable.
 
 **B. Owner mints, app holds (dev / pre-authorized).** The owner (holding the
 instance's `OWNER_SECRET`) mints a token bound to one plugin and hands it to the
@@ -156,7 +192,7 @@ Throws `Oauth3Error("node URL is required")` if `node` is empty.
 
 | call | http | auth |
 |---|---|---|
-| `oa.plugins()` | `GET /api/plugins` | anyone |
+| `oa.plugins(session?)` | `GET /api/plugins` | anyone (a `session` sees its own jars) |
 | `oa.plugin(id)` | — | returns a `PluginClient` bound to one plugin |
 | `oa.plugin(id).list()` / `oa.list(id)` | `GET /api/:plugin/items` | token or owner |
 | `oa.plugin(id).fetch(itemId)` / `oa.fetch(id, itemId)` | `GET /api/:plugin/items/:id` | token or owner |
@@ -178,8 +214,47 @@ interface PluginInfo {
   label: string;
   cookieDomains: string[];
   jar?: { present: boolean; loggedIn?: boolean; count?: number; updatedAt?: number };
+  jars?: { account?: string; count?: number; updatedAt?: number }[]; // newer nodes, per account
 }
 ```
+
+Jar status is per-identity: pass a `session` to see yours — anonymous callers see
+none present. Newer nodes report one jar per account (`jars`); `plugins()`
+normalizes that into `jar`.
+
+### `oa.preconnect(opts): Promise<PreconnectReport>`
+
+The precondition check to run **before** `connect()` (see
+[Getting a token](#getting-a-token)). Reports whether the handshake can end in a
+token that actually authorizes reads.
+
+```ts
+interface PreconnectOptions {
+  plugin: string;
+  /** Node session token (POST /api/login → {session}), when the app holds one. */
+  session?: string;
+}
+
+interface PreconnectReport {
+  plugin: string;
+  /** The extension (window.oauth3) is present — it provisions account + jar itself. */
+  extensionPresent: boolean;
+  /** The signed-in room on the node, when a session let the SDK check. */
+  account?: { signedIn: boolean; subject?: string };
+  /** Jar status for the plugin, when a session let the SDK check. */
+  jar?: { present: boolean; loggedIn?: boolean; count?: number; updatedAt?: number };
+  /** True when connect() can complete AND its token will authorize real reads. */
+  ready: boolean;
+  state: "ready" | "no-account" | "no-jar" | "unknown-plugin" | "unchecked";
+  /** One plain-language line naming the state — showable to the user as-is. */
+  reason: string;
+}
+```
+
+`account`/`jar` are **absent** (not `false`) when they could not be checked — no
+session and no extension. `ready: true` means either the extension is present
+(it provisions both) or the session is signed in with a non-empty jar for the
+plugin.
 
 ### Issuing tokens
 
@@ -225,6 +300,11 @@ Throws `Oauth3Error("connect denied by user")` if the user denies, or
 - `oa.currentToken: string | undefined` — the scoped token in hand, if any. Set
   when you pass `token` in, or after `connect()` succeeds. Read this to persist it
   (see [Token lifecycle](#token-lifecycle)).
+- `oa.pendingApproveUrl: string | undefined` — the approve URL of the web-fallback
+  handshake, set the moment `connect()` creates its request — readable whether or
+  not an `onApproveUrl` callback was wired, so "approve in your signed-in room" is
+  always showable. Undefined on the extension path (no approve URL exists there)
+  and before any `connect()`.
 
 ### `Oauth3Error`
 
@@ -366,9 +446,9 @@ identical from the SDK's view — only the URL and whether TLS is on differ.
 
 ## Examples
 
-Three complete, runnable apps in [`examples/`](examples/), each a full
-`connect → list → fetch` journey for one plugin. Run with any TypeScript-capable
-runtime:
+Four runnable programs in [`examples/`](examples/): three full
+`connect → list → fetch` journeys for one plugin, plus the `preconnect.ts`
+preflight. Run with any TypeScript-capable runtime:
 
 ```bash
 bun examples/<name>.ts          # Bun (matches package.json scripts)
@@ -381,6 +461,8 @@ npx tsx examples/<name>.ts      # Node 18+ via tsx
 | [`otter-list.ts`](examples/otter-list.ts) | `otter` | the original reference consumer — interactive `connect()` flow, then `list()` + `fetch()` of transcripts. (A real-world app: an importer that used to hold the Otter cookie itself now holds only a revocable token.) |
 | [`reddit-list.ts`](examples/reddit-list.ts) | `reddit` | token-or-connect. Lists saved posts; shows `meta.subreddit`. |
 | [`nytimes-list.ts`](examples/nytimes-list.ts) | `nytimes` | token-or-connect, plus the **browser-path caveat**: NYT's GraphQL is datadome-gated, so the instance may need the browser path to fulfill a read. Catches `Oauth3Error` and reports it instead of pretending. |
+| [`preconnect.ts`](examples/preconnect.ts) | any | the precondition check **before** `connect()` — extension present? signed-in room? non-empty jar? Prints the honest state (`ready` / `no-jar` / `no-account` / `unchecked`) and exits non-zero when not ready. |
+| [`preconnect.html`](examples/preconnect.html) | any | the browser form of the same check — served from `examples/`, it loads [`oauth3-sdk.browser.js`](examples/oauth3-sdk.browser.js) (regenerate: `bun build src/index.ts --bundle --format=esm --minify --outfile=examples/oauth3-sdk.browser.js`), runs `preconnect()` and a no-callback `connect()` end-to-end, and survives the trip to the approve page. |
 
 All three honor `OAUTH3_NODE` / `OAUTH3_TOKEN` / `OAUTH3_SUBJECT`. Omit
 `OAUTH3_TOKEN` to run the interactive `connect()` approval flow; set it to skip
