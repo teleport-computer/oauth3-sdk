@@ -111,6 +111,14 @@ GET  /api/connect/:requestId                                    -> { status: pen
 POST /api/connect/:requestId/approve                            -> approves the request, mints the token
 ```
 
+See it live: [otterscope](https://pod.dstack.soc1024.com/otterscope/) — an app whose
+*Connect Otter* button is exactly this handshake. With the extension installed it runs through
+the injected provider (`const token = await window.oauth3.connect({ node, plugin: "otter",
+app: "otterscope" })`), then reads `GET {node}/oauth3/api/otter/items` with
+`Authorization: Bearer <token>` — never a cookie. The full provider flow, request/response
+shapes included, is documented in
+[oauth3-server's docs/provider-flow.md](https://github.com/teleport-computer/oauth3-server/blob/staging/docs/provider-flow.md).
+
 **Before you connect — check preconditions (`preconnect`).** The no-extension
 (mobile) path silently assumes the user already has an account / signed-in room
 on the node, and a jar for the plugin. If the jar is empty, `connect()` still
